@@ -83,7 +83,7 @@ float Z[100];
 
 int i,j;
 
-int tilt[101];
+int tilt[100];
 
 float stationary_x;
 
