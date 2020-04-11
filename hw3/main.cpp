@@ -55,6 +55,18 @@ InterruptIn btn(SW2);
 
 Timer for_debounce;
 
+Ticker ledTicker;
+
+Ticker vectorTicker;
+
+EventQueue eventQueue;
+
+EventQueue readQueue;
+
+Thread Thread1;
+
+Thread Thread2; 
+
 int m_addr = FXOS8700CQ_SLAVE_ADDR1;
 
 uint8_t who_am_i, data[2], res[6];
@@ -63,7 +75,21 @@ int16_t acc16;
 
 float t[3];
 
-int if_debounce = 0;
+float X[100];
+
+float Y[100];
+
+float Z[100];
+
+int i,j;
+
+int tilt[101];
+
+float stationary_x;
+
+float stationary_y;
+
+float stationary_z;
 
 void FXOS8700CQ_readRegs(int addr, uint8_t * data, int len);
 
@@ -71,15 +97,23 @@ void FXOS8700CQ_writeRegs(uint8_t * data, int len);
 
 void read_vector(void);
 
-void toggle();
+void log_vector(void);
 
-void debounce();
+void blink_led1(void);
+
+void logger(void);
+
 int main() {
    EventQueue queue;
 
+   Thread1.start(callback(&eventQueue, &EventQueue::dispatch_forever));
+
+   Thread2.start(callback(&readQueue, &EventQueue::dispatch_forever));
+
    led1=1;
-   btn.rise(&debounce);
-   
+
+   btn.rise(&logger);
+
    pc.baud(115200);
 
    // Enable the FXOS8700Q
@@ -96,15 +130,13 @@ int main() {
 
    FXOS8700CQ_readRegs(FXOS8700Q_WHOAMI, &who_am_i, 1);
 
-
-   pc.printf("Here is %x\r\n", who_am_i);
-
+    read_vector();
+    stationary_x=t[0];
+    stationary_y=t[1];
+    stationary_z=t[2];
     while(true){
-        if(if_debounce)
-            led1=!led1;
-        read_vector();
+        ;
     }
-
 }
 
 
@@ -125,69 +157,109 @@ void FXOS8700CQ_writeRegs(uint8_t * data, int len) {
 
 }
 
-void read_vector(void){
+void read_vector(){
+        
+        FXOS8700CQ_readRegs(FXOS8700Q_OUT_X_MSB, res, 6);
 
-      FXOS8700CQ_readRegs(FXOS8700Q_OUT_X_MSB, res, 6);
+        acc16 = (res[0] << 6) | (res[1] >> 2);
 
+        if (acc16 > UINT14_MAX/2)
 
-      acc16 = (res[0] << 6) | (res[1] >> 2);
+            acc16 -= UINT14_MAX;
 
-      if (acc16 > UINT14_MAX/2)
-
-         acc16 -= UINT14_MAX;
-
-      t[0] = ((float)acc16) / 4096.0f;
-
-
-      acc16 = (res[2] << 6) | (res[3] >> 2);
-
-      if (acc16 > UINT14_MAX/2)
-
-         acc16 -= UINT14_MAX;
-
-      t[1] = ((float)acc16) / 4096.0f;
+        t[0] = ((float)acc16) / 4096.0f;
 
 
-      acc16 = (res[4] << 6) | (res[5] >> 2);
+        acc16 = (res[2] << 6) | (res[3] >> 2);
 
-      if (acc16 > UINT14_MAX/2)
+        if (acc16 > UINT14_MAX/2)
 
-         acc16 -= UINT14_MAX;
+            acc16 -= UINT14_MAX;
 
-      t[2] = ((float)acc16) / 4096.0f;
-
-
-      printf("FXOS8700Q ACC: X=%1.4f(%x%x) Y=%1.4f(%x%x) Z=%1.4f(%x%x)\r\n",\
-
-            t[0], res[0], res[1],\
-
-            t[1], res[2], res[3],\
-
-            t[2], res[4], res[5]\
-
-      );
+        t[1] = ((float)acc16) / 4096.0f;
 
 
-      wait(1.0);
+        acc16 = (res[4] << 6) | (res[5] >> 2);
+
+        if (acc16 > UINT14_MAX/2)
+
+            acc16 -= UINT14_MAX;
+
+        t[2] = ((float)acc16) / 4096.0f;
 }
 
-void toggle(){
+void log_vector(void){
 
-    if(for_debounce.read_ms()>1000){
+    while(i<=99){
 
-        if_debounce = 1;
+        read_vector();
 
-        for_debounce.reset();
+        X[i]=t[0];
 
+        Y[i]=t[1];
+        
+        Z[i]=t[2];
+        
+        if( Z[i] < stationary_z/sqrt(2) )
+            tilt[i] = 1;
+        else
+        {
+            tilt[i] = 0;
+        }
+
+        i++;
+
+
+        wait(0.1);
+    }
+            
+    for (j = 0; j < i; j++){
+
+        pc.printf("%1.4f\r\n", X[j]);
+        wait(0.1);
     }
 
+    for (j = 0; j < i; j++){
+
+        pc.printf("%1.4f\r\n", Y[j]);
+        wait(0.1);
+    }
+    for (j = 0; j < i; j++){
+
+        pc.printf("%1.4f\r\n", Z[j]);
+        wait(0.1);
+    }
+
+    for(j = 0; j < i; j++){
+           pc.printf("%d\r\n",tilt[j]);
+           wait(0.1);
+    }
 }
 
+void logger(void){
 
-void debounce(){
+    for_debounce.reset();
 
     for_debounce.start();
 
-    toggle();
+    i = 0;
+
+    readQueue.call(log_vector);   
+
+//    vectorTicker.attach(readQueue.event(read_vector), 0.1); 
+
+    ledTicker.attach(eventQueue.event(&blink_led1), 0.2); 
+}
+
+
+void blink_led1() {
+
+  // this runs in the normal priority thread
+    if(for_debounce.read()>10){
+        led1=1;
+    }
+    else{
+        led1 = !led1;
+    }
 
 }
